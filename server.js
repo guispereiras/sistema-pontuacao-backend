@@ -487,7 +487,6 @@ app.post('/api/admin/reset', async (req, res) => {
   try {
     await Pontuacao.deleteMany({});
     await Atividade.deleteMany({});
-    await Participante.deleteMany({});
     await Time.updateMany({}, { pontos: 0 });
     
     res.json({ message: 'Sistema resetado com sucesso!' });
