@@ -200,7 +200,7 @@ app.post('/api/pontuacao', async (req, res) => {
   try {
     const { atividadeId, timeId, participanteId, pontos, juizNome } = req.body;
     
-    if (!atividadeId || !pontos || !juizNome) {
+    if (!atividadeId || pontos === undefined || pontos === null || !juizNome) {
       return res.status(400).json({ error: 'Dados obrigatórios faltando' });
     }
 
@@ -209,9 +209,10 @@ app.post('/api/pontuacao', async (req, res) => {
       return res.status(404).json({ error: 'Atividade não encontrada ou inativa' });
     }
 
-    // Verificar se já existe pontuação para essa atividade e participante/time
+    // CORREÇÃO: Verificar se o MESMO JUIZ já votou no MESMO ALVO
     const pontuacaoExistente = await Pontuacao.findOne({
       atividadeId,
+      juizNome: juizNome, // Mesmo juiz
       $or: [
         { timeId: timeId || null },
         { participanteId: participanteId || null }
@@ -219,27 +220,27 @@ app.post('/api/pontuacao', async (req, res) => {
     });
 
     if (pontuacaoExistente) {
-      return res.status(400).json({ error: 'Pontuação já registrada para esta atividade' });
+      return res.status(400).json({ error: 'Você já pontuou este time/participante nesta atividade' });
     }
 
     const pontuacao = new Pontuacao({
       atividadeId,
       timeId: atividade.tipo === 'equipe' ? timeId : null,
       participanteId: atividade.tipo === 'individual' ? participanteId : null,
-      pontos,
+      pontos: Number(pontos), // Aceita números negativos
       juizNome
     });
 
     await pontuacao.save();
 
-    // Atualizar pontos do time ou participante
+    // Atualizar pontos do time ou participante (aceita negativos)
     if (atividade.tipo === 'equipe') {
-      await Time.findByIdAndUpdate(timeId, { $inc: { pontos: pontos } });
+      await Time.findByIdAndUpdate(timeId, { $inc: { pontos: Number(pontos) } });
     } else {
-      await Participante.findByIdAndUpdate(participanteId, { $inc: { pontos: pontos } });
+      await Participante.findByIdAndUpdate(participanteId, { $inc: { pontos: Number(pontos) } });
       // Também atualizar pontos do time do participante
       const participante = await Participante.findById(participanteId);
-      await Time.findByIdAndUpdate(participante.timeId, { $inc: { pontos: pontos } });
+      await Time.findByIdAndUpdate(participante.timeId, { $inc: { pontos: Number(pontos) } });
     }
 
     res.status(201).json({ message: 'Pontuação registrada com sucesso!' });
@@ -487,6 +488,7 @@ app.post('/api/admin/reset', async (req, res) => {
   try {
     await Pontuacao.deleteMany({});
     await Atividade.deleteMany({});
+    await Participante.deleteMany({});
     await Time.updateMany({}, { pontos: 0 });
     
     res.json({ message: 'Sistema resetado com sucesso!' });
