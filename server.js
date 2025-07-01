@@ -11,10 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 // Conexão com MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sistema-pontuacao', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sistema-pontuacao')
 .then(() => console.log('✅ Conectado ao MongoDB'))
 .catch(err => console.error('❌ Erro ao conectar MongoDB:', err));
 
@@ -246,6 +243,238 @@ app.post('/api/pontuacao', async (req, res) => {
     }
 
     res.status(201).json({ message: 'Pontuação registrada com sucesso!' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== ROTAS PARA RELATÓRIOS DE JUÍZES =====
+
+// Histórico completo de pontuações
+app.get('/api/pontuacoes/historico', async (req, res) => {
+  try {
+    const pontuacoes = await Pontuacao.find()
+      .populate('atividadeId', 'nome tipo codigo')
+      .populate('timeId', 'nome cor')
+      .populate('participanteId', 'nome')
+      .sort({ createdAt: -1 });
+
+    // Organizar dados para o frontend
+    const historicoFormatado = pontuacoes.map(pont => ({
+      _id: pont._id,
+      juizNome: pont.juizNome,
+      pontos: pont.pontos,
+      dataHora: pont.createdAt,
+      atividade: {
+        nome: pont.atividadeId.nome,
+        tipo: pont.atividadeId.tipo,
+        codigo: pont.atividadeId.codigo
+      },
+      alvo: pont.timeId ? {
+        tipo: 'time',
+        nome: pont.timeId.nome,
+        cor: pont.timeId.cor
+      } : {
+        tipo: 'participante',
+        nome: pont.participanteId.nome
+      }
+    }));
+
+    res.json(historicoFormatado);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Relatório por juiz
+app.get('/api/pontuacoes/por-juiz', async (req, res) => {
+  try {
+    const relatorio = await Pontuacao.aggregate([
+      {
+        $lookup: {
+          from: 'atividades',
+          localField: 'atividadeId',
+          foreignField: '_id',
+          as: 'atividade'
+        }
+      },
+      {
+        $lookup: {
+          from: 'times',
+          localField: 'timeId',
+          foreignField: '_id',
+          as: 'time'
+        }
+      },
+      {
+        $lookup: {
+          from: 'participantes',
+          localField: 'participanteId',
+          foreignField: '_id',
+          as: 'participante'
+        }
+      },
+      {
+        $group: {
+          _id: '$juizNome',
+          totalPontuacoes: { $sum: 1 },
+          totalPontos: { $sum: '$pontos' },
+          pontuacoes: {
+            $push: {
+              pontos: '$pontos',
+              dataHora: '$createdAt',
+              atividade: { $arrayElemAt: ['$atividade.nome', 0] },
+              atividadeCodigo: { $arrayElemAt: ['$atividade.codigo', 0] },
+              atividadeTipo: { $arrayElemAt: ['$atividade.tipo', 0] },
+              timeNome: { $arrayElemAt: ['$time.nome', 0] },
+              timeCor: { $arrayElemAt: ['$time.cor', 0] },
+              participanteNome: { $arrayElemAt: ['$participante.nome', 0] }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          juizNome: '$_id',
+          totalPontuacoes: 1,
+          totalPontos: 1,
+          mediaPontos: { $divide: ['$totalPontos', '$totalPontuacoes'] },
+          pontuacoes: 1,
+          _id: 0
+        }
+      },
+      {
+        $sort: { totalPontuacoes: -1 }
+      }
+    ]);
+
+    res.json(relatorio);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Relatório por atividade
+app.get('/api/pontuacoes/por-atividade', async (req, res) => {
+  try {
+    const relatorio = await Pontuacao.aggregate([
+      {
+        $lookup: {
+          from: 'atividades',
+          localField: 'atividadeId',
+          foreignField: '_id',
+          as: 'atividade'
+        }
+      },
+      {
+        $lookup: {
+          from: 'times',
+          localField: 'timeId',
+          foreignField: '_id',
+          as: 'time'
+        }
+      },
+      {
+        $lookup: {
+          from: 'participantes',
+          localField: 'participanteId',
+          foreignField: '_id',
+          as: 'participante'
+        }
+      },
+      {
+        $group: {
+          _id: '$atividadeId',
+          nomeAtividade: { $first: { $arrayElemAt: ['$atividade.nome', 0] } },
+          tipoAtividade: { $first: { $arrayElemAt: ['$atividade.tipo', 0] } },
+          codigoAtividade: { $first: { $arrayElemAt: ['$atividade.codigo', 0] } },
+          totalPontuacoes: { $sum: 1 },
+          totalPontos: { $sum: '$pontos' },
+          juizes: { $addToSet: '$juizNome' },
+          pontuacoes: {
+            $push: {
+              juizNome: '$juizNome',
+              pontos: '$pontos',
+              dataHora: '$createdAt',
+              timeNome: { $arrayElemAt: ['$time.nome', 0] },
+              timeCor: { $arrayElemAt: ['$time.cor', 0] },
+              participanteNome: { $arrayElemAt: ['$participante.nome', 0] }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          nomeAtividade: 1,
+          tipoAtividade: 1,
+          codigoAtividade: 1,
+          totalPontuacoes: 1,
+          totalPontos: 1,
+          totalJuizes: { $size: '$juizes' },
+          mediaPontos: { $divide: ['$totalPontos', '$totalPontuacoes'] },
+          juizes: 1,
+          pontuacoes: 1,
+          _id: 0
+        }
+      },
+      {
+        $sort: { totalPontuacoes: -1 }
+      }
+    ]);
+
+    res.json(relatorio);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Estatísticas gerais
+app.get('/api/pontuacoes/estatisticas', async (req, res) => {
+  try {
+    const estatisticas = await Pontuacao.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalPontuacoes: { $sum: 1 },
+          totalPontos: { $sum: '$pontos' },
+          mediaPontos: { $avg: '$pontos' },
+          maiorPontuacao: { $max: '$pontos' },
+          menorPontuacao: { $min: '$pontos' },
+          juizesUnicos: { $addToSet: '$juizNome' }
+        }
+      },
+      {
+        $project: {
+          totalPontuacoes: 1,
+          totalPontos: 1,
+          mediaPontos: { $round: ['$mediaPontos', 2] },
+          maiorPontuacao: 1,
+          menorPontuacao: 1,
+          totalJuizes: { $size: '$juizesUnicos' },
+          juizes: '$juizesUnicos',
+          _id: 0
+        }
+      }
+    ]);
+
+    const atividades = await Atividade.countDocuments();
+    const times = await Time.countDocuments();
+    const participantes = await Participante.countDocuments();
+
+    res.json({
+      ...estatisticas[0] || {
+        totalPontuacoes: 0,
+        totalPontos: 0,
+        mediaPontos: 0,
+        maiorPontuacao: 0,
+        menorPontuacao: 0,
+        totalJuizes: 0,
+        juizes: []
+      },
+      totalAtividades: atividades,
+      totalTimes: times,
+      totalParticipantes: participantes
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
