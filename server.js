@@ -266,6 +266,7 @@ app.get('/api/pontuacoes/historico', async (req, res) => {
       juizNome: pont.juizNome,
       pontos: pont.pontos,
       dataHora: pont.createdAt,
+      atividadeId: pont.atividadeId._id,
       atividade: {
         nome: pont.atividadeId.nome,
         tipo: pont.atividadeId.tipo,
